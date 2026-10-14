@@ -1,0 +1,21 @@
+# Локальные материалы планирования
+.codex-task-planning/
+
+# Переменные окружения и секреты
+.env
+.env.*
+!.env.example
+!.env.sample
+secrets/
+*.key
+*.pem
+*.p12
+*.pfx
+credentials*.json
+service-account*.json
+
+# Локальные файлы операционной системы и журналы
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.log
