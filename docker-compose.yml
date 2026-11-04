@@ -1,0 +1,115 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: nedra_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: nedra
+      POSTGRES_USER: nedra
+      POSTGRES_PASSWORD: nedra_secure_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - nedra_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nedra -d nedra"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: nedra_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - nedra_redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    container_name: nedra_minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadminpassword
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - nedra_miniodata:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nedra_backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgresql+asyncpg://nedra:nedra_secure_password@db:5432/nedra
+      DATABASE_URL_SYNC: postgresql+psycopg2://nedra:nedra_secure_password@db:5432/nedra
+      REDIS_URL: redis://redis:6379/0
+      REDIS_QUEUE_NAME: nedra_import_queue
+      USE_REDIS_QUEUE: "true"
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadminpassword
+      MINIO_BUCKET_NAME: nedra-excel-files
+      MINIO_SECURE: "false"
+      USE_S3_STORAGE: "true"
+    ports:
+      - "8000:8000"
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nedra_worker
+    restart: unless-stopped
+    command: ["python", "-m", "app.workers.import_worker"]
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgresql+asyncpg://nedra:nedra_secure_password@db:5432/nedra
+      DATABASE_URL_SYNC: postgresql+psycopg2://nedra:nedra_secure_password@db:5432/nedra
+      REDIS_URL: redis://redis:6379/0
+      REDIS_QUEUE_NAME: nedra_import_queue
+      USE_REDIS_QUEUE: "true"
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadminpassword
+      MINIO_BUCKET_NAME: nedra-excel-files
+      MINIO_SECURE: "false"
+      USE_S3_STORAGE: "true"
+
+volumes:
+  nedra_pgdata:
+  nedra_redisdata:
+  nedra_miniodata:
