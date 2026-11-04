@@ -9,5 +9,7 @@ venv/
 .vscode/
 *.sqlite3
 *.db
+*.db-wal
+*.db-shm
 storage/uploads/*
 !storage/uploads/.gitkeep

@@ -1,6 +1,6 @@
 import json
 from typing import Optional
-from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException, status
+from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException, BackgroundTasks, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.session import get_db
@@ -17,6 +17,7 @@ router = APIRouter(prefix="/imports", tags=["imports"])
 
 @router.post("/excel", response_model=ImportTaskCreateResponse, status_code=status.HTTP_202_ACCEPTED)
 async def upload_excel_file(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(..., description="Файл профилей скважин (.xlsx или .xlsm)"),
     well_pad_name: Optional[str] = Form(None, description="Опциональное наименование кустовой площадки"),
     db: AsyncSession = Depends(get_db),
@@ -46,7 +47,7 @@ async def upload_excel_file(
         file_bytes=content,
         filename=filename,
         well_pad_name=well_pad_name,
-        db=db,
+        background_tasks=background_tasks,
     )
 
     return ImportTaskCreateResponse(
@@ -60,13 +61,14 @@ async def upload_excel_file(
 
 @router.post("/trajectories", response_model=ImportTaskCreateResponse, status_code=status.HTTP_202_ACCEPTED)
 async def upload_trajectories_legacy(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     well_mapping: Optional[str] = Form(None),
     well_pad_name: Optional[str] = Form(None),
     db: AsyncSession = Depends(get_db),
 ):
     """Совместимый маршрут для загрузки Excel."""
-    return await upload_excel_file(file=file, well_pad_name=well_pad_name, db=db)
+    return await upload_excel_file(background_tasks=background_tasks, file=file, well_pad_name=well_pad_name, db=db)
 
 
 @router.get("/{task_id}", response_model=ImportTaskStatusResponse)
