@@ -14,15 +14,13 @@ class TrajectoryRepository:
         stmt = delete(TrajectoryPoint).where(TrajectoryPoint.well_id == well_id)
         await self.session.execute(stmt)
 
-    async def bulk_save_points(self, well_id: str, points: List[Dict[str, float]]) -> int:
+    async def bulk_save_points(self, well_id: str, points: List[Dict[str, Any]]) -> int:
         """Массовое сохранение точек траектории с высокой производительностью."""
-        # Сначала очищаем старые точки
         await self.delete_by_well_id(well_id)
 
         if not points:
             return 0
 
-        # Подготавливаем словари для bulk insert
         records = [
             {
                 "well_id": well_id,
@@ -33,11 +31,11 @@ class TrajectoryRepository:
                 "azimuth": pt["Azimuth"],
                 "deviation_ns": pt["DeviationNS"],
                 "deviation_ew": pt["DeviationEW"],
+                "dls": pt.get("DLS"),
             }
             for idx, pt in enumerate(points)
         ]
 
-        # Пакетная вставка порциями по 2000 записей
         batch_size = 2000
         for i in range(0, len(records), batch_size):
             batch = records[i : i + batch_size]
@@ -53,8 +51,6 @@ class TrajectoryRepository:
         limit: int = 1000,
         step: int = 1,
     ) -> Tuple[List[TrajectoryPoint], int]:
-        """Возвращает срез точек траектории с поддержкой прореживания (step) для фронтенда."""
-        # Подсчёт общего количества точек
         count_stmt = select(func.count(TrajectoryPoint.id)).where(TrajectoryPoint.well_id == well_id)
         total_points = (await self.session.execute(count_stmt)).scalar_one()
 
@@ -68,7 +64,6 @@ class TrajectoryRepository:
         )
 
         if step > 1:
-            # Если шаг прореживания больше 1, фильтруем по индексу точки
             query = query.where(TrajectoryPoint.point_index % step == 0)
 
         query = query.offset(offset).limit(limit)

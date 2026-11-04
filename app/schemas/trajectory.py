@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 from pydantic import BaseModel, Field
 
 
@@ -10,6 +10,9 @@ class TrajectoryPointResponse(BaseModel):
     azimuth: float = Field(..., description="Азимут, град [0-360]")
     deviation_ns: float = Field(..., description="Смещение Север-Юг, м")
     deviation_ew: float = Field(..., description="Смещение Восток-Запад, м")
+    ns: float = Field(..., description="Смещение Север-Юг (согласно NEF-14)")
+    ew: float = Field(..., description="Смещение Восток-Запад (согласно NEF-14)")
+    dls: Optional[float] = Field(None, description="DLS (Dogleg Severity), град/м (необязательно)")
     x: float = Field(..., description="Вычисленная координата X = wellhead_x + DeviationEW")
     y: float = Field(..., description="Вычисленная координата Y = wellhead_y + DeviationNS")
     z: float = Field(..., description="Вычисленная отметка Z = wellhead_z - TVD")
@@ -21,7 +24,7 @@ class TrajectoryResponse(BaseModel):
     wellhead_x: float
     wellhead_y: float
     wellhead_z: float
-    trajectory_status: str
+    trajectory_status: str = Field(..., description="Статус: loaded (загружена), error (ошибка данных), not_loaded (отсутствует)")
     total_points: int
     returned_points: int
     offset: int

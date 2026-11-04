@@ -1,7 +1,7 @@
 import math
 import re
 from io import BytesIO
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Set
 from openpyxl import load_workbook
 from openpyxl.utils.exceptions import InvalidFileException
 
@@ -42,6 +42,7 @@ HEADER_ALIASES: Dict[str, str] = {
     # Azimuth
     "azimuth": "Azimuth",
     "azimuthdeg": "Azimuth",
+    "azimuthdeg)": "Azimuth",
     "азимут": "Azimuth",
     "азимутград": "Azimuth",
     "азимутградусы": "Azimuth",
@@ -65,6 +66,18 @@ HEADER_ALIASES: Dict[str, str] = {
     "ew": "DeviationEW",
     "ewm": "DeviationEW",
     "dy": "DeviationEW",
+    # DLS
+    "dls": "DLS",
+    "dogleg": "DLS",
+    "doglegseverity": "DLS",
+    # Radians
+    "radians": "Radians",
+    "радиан": "Radians",
+    "радианы": "Radians",
+    # i (Index)
+    "i": "i",
+    "№": "i",
+    "номер": "i",
 }
 
 EXCEL_ERROR_CODES = {
@@ -77,7 +90,7 @@ EXCEL_ERROR_CODES = {
     "#NUM!",
 }
 
-MAX_DIAGNOSTIC_ERRORS_PER_SHEET = 100
+MAX_DIAGNOSTIC_ITEMS_PER_SHEET = 100
 
 
 def normalise_header(value: Any) -> str:
@@ -98,7 +111,6 @@ def is_numeric_value(val: Any) -> Tuple[bool, Optional[float], Optional[str], Op
         if val_strip in EXCEL_ERROR_CODES or val_strip.startswith("#"):
             return False, None, "ref_error", f"Ошибка формулы Excel: {val_strip}"
         try:
-            # Замена возможной десятичной запятой на точку
             num = float(val.strip().replace(",", "."))
         except (ValueError, TypeError):
             return False, None, "non_numeric", f"Нечисловое значение: '{val}'"
@@ -119,15 +131,31 @@ class ParsedSheetData:
     def __init__(self, sheet_name: str):
         self.sheet_name = sheet_name
         self.status = "loaded"  # loaded, error, missing
-        self.points: List[Dict[str, float]] = []
+        self.points: List[Dict[str, Any]] = []
         self.errors: List[DiagnosticErrorItem] = []
         self.total_errors_count = 0
+        self.total_warnings_count = 0
+        self.has_file_level_error = False
         self.message: Optional[str] = None
 
-    def add_error(self, row: int, column: str, error_type: str, message: str, level: str = "error") -> None:
-        self.total_errors_count += 1
-        self.status = "error"
-        if len(self.errors) < MAX_DIAGNOSTIC_ERRORS_PER_SHEET:
+    def add_error(
+        self,
+        row: Optional[int],
+        column: str,
+        error_type: str,
+        message: str,
+        level: str = "error",
+        scope: str = "well_trajectory",
+    ) -> None:
+        if level == "error":
+            self.total_errors_count += 1
+            self.status = "error"
+            if scope == "file":
+                self.has_file_level_error = True
+        else:
+            self.total_warnings_count += 1
+
+        if len(self.errors) < MAX_DIAGNOSTIC_ITEMS_PER_SHEET:
             self.errors.append(
                 DiagnosticErrorItem(
                     sheet=self.sheet_name,
@@ -135,6 +163,7 @@ class ParsedSheetData:
                     column=column,
                     error_type=error_type,
                     level=level,
+                    scope=scope,
                     message=message,
                 )
             )
@@ -151,6 +180,7 @@ class ParsedSheetData:
             trajectory_status=self.status,
             points_count=len(self.points) if self.status == "loaded" else 0,
             errors_count=self.total_errors_count,
+            warnings_count=self.total_warnings_count,
             errors=self.errors,
             message=msg,
         )
@@ -159,72 +189,101 @@ class ParsedSheetData:
 def parse_sheet(ws) -> ParsedSheetData:
     """Парсит один лист скважины в потоковом режиме с openpyxl iter_rows(values_only=True).
     
-    Бизнес-правило NEF-27:
-    Если обнаружена ошибка хотя бы в одной точке, траектория скважины целиком не загружается.
-    Ошибки лишних столбцов (DLS, Radians и др.) игнорируются и не влияют на загрузку.
+    Требования NEF-14:
+    - Отсутствие обязательного столбца: уровень 'file', файл отклоняется.
+    - Ошибка в обязательных столбцах: уровень 'well_trajectory', траектория скважины не загружается целиком.
+    - Лишние столбцы (Radians, DLS, формулы в заголовках) фиксируются как предупреждения (warning).
     """
     result = ParsedSheetData(ws.title)
     rows_iter = ws.iter_rows(values_only=True)
 
-    # 1. Поиск строки заголовка (обычно первая строка, допускаем поиск среди первых 5 строк)
+    # 1. Поиск строки заголовка
     header_map: Dict[str, int] = {}
+    extra_columns: List[str] = []
     header_row_idx = 0
 
     for row_idx, row in enumerate(rows_iter, start=1):
         if not row:
             continue
-        # Проверяем, есть ли в строке обязательные столбцы
+
         candidate_map: Dict[str, int] = {}
+        row_extra: List[str] = []
+
         for col_idx, cell_value in enumerate(row):
             norm = normalise_header(cell_value)
             canonical = HEADER_ALIASES.get(norm)
             if canonical and canonical in REQUIRED_COLUMNS:
                 candidate_map[canonical] = col_idx
+            elif canonical == "DLS":
+                candidate_map["DLS"] = col_idx
+            elif cell_value is not None:
+                str_val = str(cell_value).strip()
+                if str_val:
+                    row_extra.append(str_val)
 
-        # Если нашли хотя бы 3 обязательных столбца, считаем это заголовком
-        if len(candidate_map) >= 3:
+        if len([c for c in REQUIRED_COLUMNS if c in candidate_map]) >= 3:
             header_map = candidate_map
+            extra_columns = row_extra
             header_row_idx = row_idx
             break
 
         if row_idx >= 10:
-            # Превышен лимит поиска заголовка
             break
 
-    # Проверка наличия всех обязательных столбцов
+    # Фиксация предупреждений о лишних столбцах (NEF-14, Таблица 3)
+    for extra_col in extra_columns[:20]:
+        result.add_error(
+            row=header_row_idx or 1,
+            column=extra_col,
+            error_type="extra_column",
+            message=f"Лишний столбец '{extra_col}' не используется для построения траектории",
+            level="warning",
+            scope="well_trajectory",
+        )
+    if len(extra_columns) > 20:
+        result.add_error(
+            row=header_row_idx or 1,
+            column=f"+{len(extra_columns) - 20} столбцов",
+            error_type="extra_columns_overflow",
+            message=f"На листе обнаружено ещё {len(extra_columns) - 20} лишних столбцов",
+            level="warning",
+            scope="well_trajectory",
+        )
+
+    # Проверка наличия всех обязательных столбцов (Уровень: Файл!)
     missing_columns = [col for col in REQUIRED_COLUMNS if col not in header_map]
     if missing_columns:
         result.add_error(
             row=header_row_idx or 1,
             column=", ".join(missing_columns),
             error_type="missing_column",
-            message=f"Отсутствуют обязательные столбцы: {', '.join(missing_columns)}",
+            message=f"Отсутствуют обязательные столбцы: {', '.join(missing_columns)}. Файл отклоняется.",
             level="error",
+            scope="file",
         )
         return result
 
     # 2. Потоковое чтение точек траектории
-    raw_points: List[Dict[str, float]] = []
+    raw_points: List[Dict[str, Any]] = []
     has_critical_error = False
 
     for row_idx, row in enumerate(rows_iter, start=header_row_idx + 1):
         if not row:
             continue
 
-        # Извлекаем значения только для обязательных столбцов
+        # Значения обязательных столбцов
         row_values: Dict[str, Any] = {}
         for col_name in REQUIRED_COLUMNS:
             idx = header_map[col_name]
             val = row[idx] if idx < len(row) else None
             row_values[col_name] = val
 
-        # Если вся строка пустая (все обязательные столбцы None), пропускаем
+        # Пропуск пустых строк
         if all(v is None or (isinstance(v, str) and not v.strip()) for v in row_values.values()):
             continue
 
-        # Проверяем каждое обязательное поле
         row_has_error = False
-        parsed_row: Dict[str, float] = {}
+        parsed_row: Dict[str, Any] = {}
 
         for col_name in REQUIRED_COLUMNS:
             val = row_values[col_name]
@@ -236,11 +295,24 @@ def parse_sheet(ws) -> ParsedSheetData:
                     error_type=err_type or "invalid_value",
                     message=err_msg or f"Некорректное значение в столбце {col_name}",
                     level="error",
+                    scope="well_trajectory",
                 )
                 row_has_error = True
                 has_critical_error = True
             else:
                 parsed_row[col_name] = num_val
+
+        # Опциональный столбец DLS (если есть, считываем как float или None)
+        if "DLS" in header_map:
+            dls_idx = header_map["DLS"]
+            dls_val = row[dls_idx] if dls_idx < len(row) else None
+            if dls_val is not None:
+                is_valid_dls, num_dls, _, _ = is_numeric_value(dls_val)
+                parsed_row["DLS"] = num_dls if is_valid_dls else None
+            else:
+                parsed_row["DLS"] = None
+        else:
+            parsed_row["DLS"] = None
 
         if row_has_error:
             continue
@@ -256,6 +328,7 @@ def parse_sheet(ws) -> ParsedSheetData:
                 error_type="out_of_range",
                 message=f"Зенитный угол ({inclination}°) вне допустимого диапазона 0–180°",
                 level="error",
+                scope="well_trajectory",
             )
             has_critical_error = True
 
@@ -266,6 +339,7 @@ def parse_sheet(ws) -> ParsedSheetData:
                 error_type="out_of_range",
                 message=f"Азимут ({azimuth}°) вне допустимого диапазона 0–360°",
                 level="error",
+                scope="well_trajectory",
             )
             has_critical_error = True
 
@@ -290,13 +364,7 @@ def parse_sheet(ws) -> ParsedSheetData:
 
 
 def parse_excel_workbook(file_bytes: bytes, filename: str) -> List[ParsedSheetData]:
-    """Открывает книгу openpyxl в оптимальном режиме для чтения больших данных.
-    
-    Параметры:
-    - read_only=True: минимальное потребление RAM, потоковый парсинг XML.
-    - data_only=True: считываются значения, а не формулы.
-    - keep_vba=False: макросы не выполняются.
-    """
+    """Открывает книгу openpyxl в оптимальном режиме для чтения больших данных."""
     try:
         wb = load_workbook(
             filename=BytesIO(file_bytes),

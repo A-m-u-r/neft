@@ -1,3 +1,4 @@
+from typing import Optional
 from sqlalchemy import Float, Integer, ForeignKey, Index
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -11,6 +12,7 @@ class TrajectoryPoint(Base):
     Координаты X/Y в базе отдельно не хранятся, а вычисляются:
     X = wellhead_x + DeviationEW
     Y = wellhead_y + DeviationNS
+    Z = wellhead_z - TVD
     """
     __tablename__ = "trajectory_points"
     __table_args__ = (
@@ -29,5 +31,6 @@ class TrajectoryPoint(Base):
     azimuth: Mapped[float] = mapped_column(Float, nullable=False)
     deviation_ns: Mapped[float] = mapped_column(Float, nullable=False)
     deviation_ew: Mapped[float] = mapped_column(Float, nullable=False)
+    dls: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
     well: Mapped["Well"] = relationship("Well", back_populates="trajectory_points")
