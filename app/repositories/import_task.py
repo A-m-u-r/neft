@@ -10,7 +10,8 @@ class ImportTaskRepository:
         self.session = session
 
     async def get_by_id(self, task_id: str) -> Optional[ImportTask]:
-        query = select(ImportTask).where(ImportTask.id == task_id)
+        clean_id = (task_id or "").strip()
+        query = select(ImportTask).where(ImportTask.id == clean_id)
         result = await self.session.execute(query)
         return result.scalar_one_or_none()
 

@@ -53,6 +53,10 @@ class ImportService:
             task_id = task.id
 
         logger.info(
+            f"[DIAG] [PID {os.getpid()}] [DB {settings.DATABASE_URL}] "
+            f"INSERT ImportTask: id={task_id}, status={task.status}, filename={filename}"
+        )
+        logger.info(
             f"[Task {task_id}] Шаг 1-2: Запись ImportTask успешно создана в БД и закоммичена "
             f"для файла '{filename}' (куст: '{well_pad_name}')."
         )

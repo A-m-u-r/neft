@@ -1,8 +1,11 @@
 import json
+import os
+import logging
 from typing import Optional
 from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException, BackgroundTasks, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.database.session import get_db
 from app.services.import_service import import_service
 from app.repositories.import_task import ImportTaskRepository
@@ -12,6 +15,7 @@ from app.schemas.imports import (
     DiagnosticReportResponse,
 )
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/imports", tags=["imports"])
 
 
@@ -20,14 +24,8 @@ async def upload_excel_file(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(..., description="Файл профилей скважин (.xlsx или .xlsm)"),
     well_pad_name: Optional[str] = Form(None, description="Опциональное наименование кустовой площадки"),
-    db: AsyncSession = Depends(get_db),
 ):
-    """Загрузка Excel-файла с профилями скважин кустовой площадки.
-    
-    - Каждый лист соответствует одной скважине.
-    - Обработка выполняется в фоновом режиме (Redis worker / асинхронная задача).
-    - Возвращает ID задачи для отслеживания статуса.
-    """
+    """Загрузка Excel-файла с профилями скважин кустовой площадки."""
     filename = (file.filename or "").strip()
     filename_lower = filename.lower()
     if not (filename_lower.endswith(".xlsx") or filename_lower.endswith(".xlsm")):
@@ -50,6 +48,11 @@ async def upload_excel_file(
         background_tasks=background_tasks,
     )
 
+    logger.info(
+        f"[DIAG] [PID {os.getpid()}] [DB {settings.DATABASE_URL}] "
+        f"POST /imports/excel: task_id={task_id}, filename={filename}"
+    )
+
     return ImportTaskCreateResponse(
         task_id=task_id,
         status="pending",
@@ -65,10 +68,9 @@ async def upload_trajectories_legacy(
     file: UploadFile = File(...),
     well_mapping: Optional[str] = Form(None),
     well_pad_name: Optional[str] = Form(None),
-    db: AsyncSession = Depends(get_db),
 ):
     """Совместимый маршрут для загрузки Excel."""
-    return await upload_excel_file(background_tasks=background_tasks, file=file, well_pad_name=well_pad_name, db=db)
+    return await upload_excel_file(background_tasks=background_tasks, file=file, well_pad_name=well_pad_name)
 
 
 @router.get("/{task_id}", response_model=ImportTaskStatusResponse)
@@ -77,9 +79,20 @@ async def get_import_task_status(
     db: AsyncSession = Depends(get_db),
 ):
     """Получение текущего статуса обработки файла импорта."""
+    cleaned_task_id = task_id.strip()
+    pid = os.getpid()
+    db_url = settings.DATABASE_URL
+
     task_repo = ImportTaskRepository(db)
-    task = await task_repo.get_by_id(task_id)
+    task = await task_repo.get_by_id(cleaned_task_id)
+
+    logger.info(
+        f"[DIAG] [PID {pid}] [DB {db_url}] "
+        f"SELECT ImportTask: task_id={cleaned_task_id}, found={task is not None}, status={task.status if task else 'NOT_FOUND'}"
+    )
+
     if not task:
+        logger.warning(f"[DIAG] [PID {pid}] [DB {db_url}] Задача не найдена: {cleaned_task_id}")
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Задача не найдена")
 
     return ImportTaskStatusResponse(
@@ -103,8 +116,18 @@ async def get_diagnostic_report(
     db: AsyncSession = Depends(get_db),
 ):
     """Получение подробного диагностического отчёта со списком ошибок по листам и строкам."""
+    cleaned_task_id = task_id.strip()
+    pid = os.getpid()
+    db_url = settings.DATABASE_URL
+
     task_repo = ImportTaskRepository(db)
-    task = await task_repo.get_by_id(task_id)
+    task = await task_repo.get_by_id(cleaned_task_id)
+
+    logger.info(
+        f"[DIAG] [PID {pid}] [DB {db_url}] "
+        f"SELECT DiagnosticReport: task_id={cleaned_task_id}, found={task is not None}"
+    )
+
     if not task:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Задача не найдена")
 
@@ -113,6 +136,7 @@ async def get_diagnostic_report(
             return DiagnosticReportResponse(
                 task_id=task.id,
                 status=task.status,
+                file_status="accepted",
                 total_sheets=0,
                 successful_sheets=0,
                 failed_sheets=0,
