@@ -20,7 +20,7 @@ async def list_well_pads(
     limit: int = Query(100, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
 ):
-    """Получение списка кустовых площадок."""
+    """Возвращает список кустовых площадок с количеством скважин."""
     repo = WellPadRepository(db)
     pads = await repo.list_all(skip=skip, limit=limit)
     response = []
@@ -44,7 +44,7 @@ async def create_well_pad(
     payload: WellPadCreate,
     db: AsyncSession = Depends(get_db),
 ):
-    """Создание новой кустовой площадки вручную."""
+    """Создаёт новую кустовую площадку."""
     repo = WellPadRepository(db)
     existing = await repo.get_by_name(payload.name)
     if existing:
@@ -74,7 +74,7 @@ async def get_well_pad_structure(
     pad_id: str,
     db: AsyncSession = Depends(get_db),
 ):
-    """Получение структуры кустовой площадки вместе со списком скважин."""
+    """Возвращает детальную структуру кустовой площадки и список скважин."""
     repo = WellPadRepository(db)
     pad = await repo.get_by_id(pad_id, load_wells=True)
     if not pad:

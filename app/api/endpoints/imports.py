@@ -1,11 +1,8 @@
-import json
-import os
 import logging
 from typing import Optional
 from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException, BackgroundTasks, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
 from app.database.session import get_db
 from app.services.import_service import import_service
 from app.repositories.import_task import ImportTaskRepository
@@ -25,7 +22,7 @@ async def upload_excel_file(
     file: UploadFile = File(..., description="Файл профилей скважин (.xlsx или .xlsm)"),
     well_pad_name: Optional[str] = Form(None, description="Опциональное наименование кустовой площадки"),
 ):
-    """Загрузка Excel-файла с профилями скважин кустовой площадки."""
+    """Принимает Excel-файл с профилями скважин и регистрирует фоновую задачу импорта."""
     filename = (file.filename or "").strip()
     filename_lower = filename.lower()
     if not (filename_lower.endswith(".xlsx") or filename_lower.endswith(".xlsm")):
@@ -48,10 +45,7 @@ async def upload_excel_file(
         background_tasks=background_tasks,
     )
 
-    logger.info(
-        f"[DIAG] [PID {os.getpid()}] [DB {settings.DATABASE_URL}] "
-        f"POST /imports/excel: task_id={task_id}, filename={filename}"
-    )
+    logger.info("Зарегистрирована задача импорта %s для файла '%s'", task_id, filename)
 
     return ImportTaskCreateResponse(
         task_id=task_id,
@@ -69,7 +63,7 @@ async def upload_trajectories_legacy(
     well_mapping: Optional[str] = Form(None),
     well_pad_name: Optional[str] = Form(None),
 ):
-    """Совместимый маршрут для загрузки Excel."""
+    """Алиас маршрута загрузки Excel-файла для обратной совместимости."""
     return await upload_excel_file(background_tasks=background_tasks, file=file, well_pad_name=well_pad_name)
 
 
@@ -78,23 +72,17 @@ async def get_import_task_status(
     task_id: str,
     db: AsyncSession = Depends(get_db),
 ):
-    """Получение текущего статуса обработки файла импорта."""
+    """Возвращает текущий статус обработки задачи импорта."""
     cleaned_task_id = task_id.strip()
-    pid = os.getpid()
-    db_url = settings.DATABASE_URL
 
     task_repo = ImportTaskRepository(db)
     task = await task_repo.get_by_id(cleaned_task_id)
 
-    logger.info(
-        f"[DIAG] [PID {pid}] [DB {db_url}] "
-        f"SELECT ImportTask: task_id={cleaned_task_id}, found={task is not None}, status={task.status if task else 'NOT_FOUND'}"
-    )
-
     if not task:
-        logger.warning(f"[DIAG] [PID {pid}] [DB {db_url}] Задача не найдена: {cleaned_task_id}")
+        logger.warning("Задача импорта не найдена: %s", cleaned_task_id)
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Задача не найдена")
 
+    logger.debug("Запрошен статус задачи %s: %s", cleaned_task_id, task.status)
     return ImportTaskStatusResponse(
         task_id=task.id,
         status=task.status,
@@ -115,20 +103,14 @@ async def get_diagnostic_report(
     task_id: str,
     db: AsyncSession = Depends(get_db),
 ):
-    """Получение подробного диагностического отчёта со списком ошибок по листам и строкам."""
+    """Возвращает подробный диагностический отчёт с детализацией по листам и строкам."""
     cleaned_task_id = task_id.strip()
-    pid = os.getpid()
-    db_url = settings.DATABASE_URL
 
     task_repo = ImportTaskRepository(db)
     task = await task_repo.get_by_id(cleaned_task_id)
 
-    logger.info(
-        f"[DIAG] [PID {pid}] [DB {db_url}] "
-        f"SELECT DiagnosticReport: task_id={cleaned_task_id}, found={task is not None}"
-    )
-
     if not task:
+        logger.warning("Запрошен отчёт для несуществующей задачи: %s", cleaned_task_id)
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Задача не найдена")
 
     if not task.diagnostic_report:

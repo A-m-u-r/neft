@@ -12,6 +12,7 @@ class WellRepository:
         self.session = session
 
     async def get_by_id(self, well_id: str, load_pad: bool = False) -> Optional[Well]:
+        """Возвращает скважину по ID с опциональной загрузкой кустовой площадки."""
         query = select(Well).where(Well.id == well_id)
         if load_pad:
             query = query.options(selectinload(Well.well_pad))
@@ -19,6 +20,7 @@ class WellRepository:
         return result.scalar_one_or_none()
 
     async def get_by_pad_and_name(self, well_pad_id: str, name: str) -> Optional[Well]:
+        """Поиск скважины по ID куста и имени."""
         query = select(Well).where(Well.well_pad_id == well_pad_id, Well.name == name)
         result = await self.session.execute(query)
         return result.scalar_one_or_none()
@@ -54,6 +56,7 @@ class WellRepository:
         skip: int = 0,
         limit: int = 100,
     ) -> Tuple[List[Well], int]:
+        """Возвращает список скважин и общее количество с поддержкой фильтрации и пагинации."""
         query = select(Well)
         if well_pad_id:
             query = query.where(Well.well_pad_id == well_pad_id)
@@ -73,6 +76,7 @@ class WellRepository:
         points_count: int,
         error_message: Optional[str] = None,
     ) -> Optional[Well]:
+        """Обновляет статус траектории, число точек и текст ошибки скважины."""
         well = await self.get_by_id(well_id)
         if well:
             well.trajectory_status = status
@@ -88,6 +92,7 @@ class WellRepository:
         wellhead_y: Optional[float] = None,
         wellhead_z: Optional[float] = None,
     ) -> Optional[Well]:
+        """Обновляет координаты устья скважины."""
         well = await self.get_by_id(well_id)
         if well:
             if wellhead_x is not None:

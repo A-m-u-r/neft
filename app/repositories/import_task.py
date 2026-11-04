@@ -10,6 +10,7 @@ class ImportTaskRepository:
         self.session = session
 
     async def get_by_id(self, task_id: str) -> Optional[ImportTask]:
+        """Возвращает задачу импорта по идентификатору."""
         clean_id = (task_id or "").strip()
         query = select(ImportTask).where(ImportTask.id == clean_id)
         result = await self.session.execute(query)
@@ -22,6 +23,7 @@ class ImportTaskRepository:
         well_pad_id: Optional[str] = None,
         well_pad_name: Optional[str] = None,
     ) -> ImportTask:
+        """Создает новую запись задачи импорта со статусом pending."""
         task = ImportTask(
             filename=filename,
             storage_path=storage_path,
@@ -44,6 +46,7 @@ class ImportTaskRepository:
         error_message: Optional[str] = None,
         well_pad_id: Optional[str] = None,
     ) -> Optional[ImportTask]:
+        """Обновляет статус, счётчики листов и диагностический отчёт задачи импорта."""
         task = await self.get_by_id(task_id)
         if task:
             task.status = status

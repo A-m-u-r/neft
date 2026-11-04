@@ -271,14 +271,12 @@ def parse_sheet(ws) -> ParsedSheetData:
         if not row:
             continue
 
-        # Значения обязательных столбцов
         row_values: Dict[str, Any] = {}
         for col_name in REQUIRED_COLUMNS:
             idx = header_map[col_name]
             val = row[idx] if idx < len(row) else None
             row_values[col_name] = val
 
-        # Пропуск пустых строк
         if all(v is None or (isinstance(v, str) and not v.strip()) for v in row_values.values()):
             continue
 

@@ -15,14 +15,18 @@ logger = logging.getLogger(__name__)
 
 
 class ImportWorker:
+    """Фоновый воркер для обработки задач импорта Excel из очереди Redis."""
+
     def __init__(self):
         self.running = True
 
     def stop(self, *args):
+        """Обработчик сигналов завершения процесса (SIGINT, SIGTERM)."""
         logger.info("Получен сигнал остановки воркера...")
         self.running = False
 
     async def run(self):
+        """Основной цикл извлечения и обработки задач из очереди."""
         logger.info(f"Запуск воркера импорта очереди '{settings.REDIS_QUEUE_NAME}'...")
         await init_db()
 

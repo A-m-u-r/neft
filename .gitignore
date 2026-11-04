@@ -1,15 +1,43 @@
+# Python & Bytecode
 __pycache__/
-.pytest_cache/
+*.py[cod]
+*$py.class
+
+# Virtual environments
 .venv/
 venv/
+ENV/
+
+# Configuration & Secrets
 .env
-*.py[cod]
-.DS_Store
+.env.local
+
+# IDEs & Editors
 .idea/
 .vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Databases & Runtime State
 *.sqlite3
 *.db
 *.db-wal
 *.db-shm
+
+# Logs
+*.log
+logs/
+
+# Local test / acceptance artifacts
+NEF-28_acceptance/
+
+# Storage & Uploads
 storage/uploads/*
 !storage/uploads/.gitkeep

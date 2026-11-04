@@ -37,11 +37,12 @@ app/
 ├── repositories/         # Слой доступа к данным (DAO / Repositories)
 ├── schemas/              # Pydantic v2 схемы запросов и ответов
 ├── services/             # Бизнес-логика:
-│   ├── excel_parser.py   # Потоковый парсинг и валидация книги Excel
-│   ├── import_service.py # Координация импорта и обработка скважин
-│   ├── storage.py        # Интеграция с MinIO / локальным S3
+│   ├── excel_parser.py   # Потоковый парсинг и валидация книги Excel (NEF-14)
+│   ├── import_service.py # Координация импорта и обработка скважин (NEF-27)
+│   ├── storage.py        # Интеграция с MinIO / локальным хранилищем
 │   └── task_queue.py     # Очередь задач Redis
-└── workers/              # Фоновые воркеры (ImportWorker)
+└── workers/              # Фоновые воркеры:
+    └── import_worker.py  # Фоновый воркер (Redis consumer)
 ```
 
 ---

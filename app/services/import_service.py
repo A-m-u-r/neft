@@ -40,7 +40,7 @@ class ImportService:
         if not well_pad_name or not well_pad_name.strip():
             well_pad_name = Path(filename).stem
 
-        # --- ШАГ 1 & 2: Создание записи задания и немедленный Commit в БД ---
+        # Шаг 1-2: создание записи задания и немедленная фиксация транзакции
         async with AsyncSessionLocal() as session:
             task_repo = ImportTaskRepository(session)
             task = await task_repo.create(
@@ -53,16 +53,13 @@ class ImportService:
             task_id = task.id
 
         logger.info(
-            f"[DIAG] [PID {os.getpid()}] [DB {settings.DATABASE_URL}] "
-            f"INSERT ImportTask: id={task_id}, status={task.status}, filename={filename}"
-        )
-        logger.info(
-            f"[Task {task_id}] Шаг 1-2: Запись ImportTask успешно создана в БД и закоммичена "
-            f"для файла '{filename}' (куст: '{well_pad_name}')."
+            "Запись задания импорта %s создана в БД для файла '%s' (куст: '%s')",
+            task_id,
+            filename,
+            well_pad_name,
         )
 
-        # --- ШАГ 3: Сохранение исходного файла в хранилище ---
-        logger.info(f"[Task {task_id}] Шаг 3: Сохранение исходного файла в хранилище...")
+        # Шаг 3: сохранение исходного файла в объектное/локальное хранилище
         try:
             storage_path = storage_service.save_file(file_bytes, filename)
             async with AsyncSessionLocal() as session:
@@ -71,9 +68,9 @@ class ImportService:
                 if task:
                     task.storage_path = storage_path
                     await session.commit()
-            logger.info(f"[Task {task_id}] Исходный файл сохранён по пути '{storage_path}'.")
+            logger.info("Файл задания %s сохранён по пути '%s'", task_id, storage_path)
         except Exception as exc:
-            logger.error(f"[Task {task_id}] Ошибка при сохранении файла в хранилище: {exc}", exc_info=True)
+            logger.error("Ошибка сохранения файла задания %s в хранилище: %s", task_id, exc, exc_info=True)
             async with AsyncSessionLocal() as session:
                 task_repo = ImportTaskRepository(session)
                 await task_repo.update_status(
@@ -84,16 +81,15 @@ class ImportService:
                 await session.commit()
             return task_id
 
-        # --- ШАГ 4: Отправка задания в очередь задач ---
-        logger.info(f"[Task {task_id}] Шаг 4: Отправка задания на обработку...")
+        # Шаг 4: отправка задания в очередь обработки
         if settings.USE_REDIS_QUEUE:
             try:
                 enqueued = task_queue_service.enqueue_import_task(task_id)
                 if not enqueued:
                     raise RuntimeError(f"Очередь Redis недоступна или отклонила задачу {task_id}")
-                logger.info(f"[Task {task_id}] Задание успешно отправлено в очередь Redis '{settings.REDIS_QUEUE_NAME}'.")
+                logger.info("Задание %s отправлено в очередь Redis '%s'", task_id, settings.REDIS_QUEUE_NAME)
             except Exception as exc:
-                logger.error(f"[Task {task_id}] Ошибка отправки задания в очередь Redis: {exc}", exc_info=True)
+                logger.error("Ошибка отправки задания %s в очередь Redis: %s", task_id, exc, exc_info=True)
                 async with AsyncSessionLocal() as session:
                     task_repo = ImportTaskRepository(session)
                     await task_repo.update_status(
@@ -104,7 +100,6 @@ class ImportService:
                     await session.commit()
                 return task_id
         else:
-            logger.info(f"[Task {task_id}] Redis отключен (USE_REDIS_QUEUE=False). Запуск локального асинхронного воркера...")
             if background_tasks:
                 background_tasks.add_task(self.process_import_task, task_id)
             else:
@@ -114,9 +109,7 @@ class ImportService:
         return task_id
 
     async def process_import_task(self, task_id: str) -> None:
-        """Основной пайплайн обработки файла воркером (Шаги 5-6)."""
-        logger.info(f"[Task {task_id}] Шаг 5: Воркер начал обработку задания...")
-
+        """Основной пайплайн обработки файла воркером (шаги 5-6)."""
         async with AsyncSessionLocal() as db:
             task_repo = ImportTaskRepository(db)
             well_pad_repo = WellPadRepository(db)
@@ -125,33 +118,26 @@ class ImportService:
 
             task = await task_repo.get_by_id(task_id)
             if not task:
-                logger.error(f"[Task {task_id}] Критическая ошибка: задание не найдено в БД!")
+                logger.error("Задание %s не найдено в БД при запуске обработки", task_id)
                 return
 
             try:
                 await task_repo.update_status(task_id, status="processing")
                 await db.commit()
-                logger.info(f"[Task {task_id}] Статус задания обновлен на 'processing'.")
 
                 if not task.storage_path:
-                    raise ValueError("Файл не был сохранен в хранилище (отсутствует storage_path).")
+                    raise ValueError("Файл не был сохранён в хранилище (отсутствует storage_path)")
 
-                # Чтение содержимого файла
-                logger.info(f"[Task {task_id}] Считывание файла из хранилища: {task.storage_path}...")
                 file_bytes = storage_service.get_file(task.storage_path)
-
-                # Потоковый парсинг книги Excel
-                logger.info(f"[Task {task_id}] Парсинг листов Excel книги...")
                 parsed_sheets: List[ParsedSheetData] = parse_excel_workbook(file_bytes, task.filename)
-                logger.info(f"[Task {task_id}] Обнаружено листов: {len(parsed_sheets)}.")
 
-                # Проверка наличия ошибки уровня 'file' (NEF-14, Таблица 3: отсутствие обязательного столбца)
+                # Валидация уровня 'file': отсутствие обязательных столбцов отклоняет весь файл (NEF-14)
                 file_level_errors = [
                     err for s in parsed_sheets for err in s.errors if getattr(err, "scope", "") == "file"
                 ]
                 if file_level_errors:
                     err_msg = file_level_errors[0].message
-                    logger.warning(f"[Task {task_id}] Файл отклонен: {err_msg}")
+                    logger.warning("Файл задачи %s отклонён: %s", task_id, err_msg)
                     diagnostic_sheets = [s.to_diagnostic_report() for s in parsed_sheets]
                     report = DiagnosticReportResponse(
                         task_id=task_id,
@@ -178,16 +164,14 @@ class ImportService:
                     await db.commit()
                     return
 
-                # Получение или создание кустовой площадки
                 pad_name = task.well_pad_name or Path(task.filename).stem
                 well_pad = await well_pad_repo.get_or_create(pad_name)
 
                 successful_count = 0
                 failed_count = 0
 
-                # Обработка скважин по листам
                 for sheet in parsed_sheets:
-                    # Скважина всегда сохраняется и остаётся доступной в системе
+                    # Скважина на кусте сохраняется всегда, даже при повреждённой траектории
                     well, _ = await well_repo.get_or_create(
                         well_pad_id=well_pad.id,
                         name=sheet.sheet_name,
@@ -202,16 +186,16 @@ class ImportService:
                             error_message=None,
                         )
                         successful_count += 1
-                        logger.info(f"[Task {task_id}] Скважина '{sheet.sheet_name}' успешно загружена ({saved_points} точек).")
+                        logger.info("Скважина '%s' успешно импортирована (%d точек)", sheet.sheet_name, saved_points)
 
                     elif sheet.status == "error":
-                        # Правило NEF-27 и NEF-14:
-                        # - Скважина сохраняется на кусте;
-                        # - Карточка скважины остаётся доступной;
-                        # - Устьевые координаты сохраняются;
-                        # - Траектория целиком не загружается (0 точек);
-                        # - Статус: error;
-                        # - Сообщение: "Траектория не загружена: ошибка в исходных данных".
+                        # Бизнес-правило NEF-27 и NEF-14:
+                        # - скважина сохраняется на кустовой площадке;
+                        # - карточка скважины остаётся доступной;
+                        # - устьевые координаты сохраняются;
+                        # - траектория целиком не загружается (0 сохранённых точек);
+                        # - статус: error;
+                        # - сообщение: "Траектория не загружена: ошибка в исходных данных".
                         await trajectory_repo.delete_by_well_id(well.id)
                         await well_repo.update_trajectory_status(
                             well_id=well.id,
@@ -221,8 +205,9 @@ class ImportService:
                         )
                         failed_count += 1
                         logger.warning(
-                            f"[Task {task_id}] Скважина '{sheet.sheet_name}' сохранена без траектории "
-                            f"(ошибок: {sheet.total_errors_count})."
+                            "Скважина '%s' сохранена без траектории (ошибок в данных: %d)",
+                            sheet.sheet_name,
+                            sheet.total_errors_count,
                         )
 
                     else:  # missing
@@ -234,7 +219,7 @@ class ImportService:
                             error_message=sheet.message or "На листе не найдены точки траектории",
                         )
 
-                # --- ШАГ 6: Обновление статуса и диагностического отчёта ---
+                # Шаг 6: фиксация общего статуса и сохранение диагностического отчёта
                 task_status = "completed_with_errors" if failed_count > 0 else "completed"
                 diagnostic_sheets = [s.to_diagnostic_report() for s in parsed_sheets]
 
@@ -266,12 +251,15 @@ class ImportService:
                 )
                 await db.commit()
                 logger.info(
-                    f"[Task {task_id}] Шаг 6: Задание успешно завершено со статусом '{task_status}'. "
-                    f"Успешных листов: {successful_count}, с ошибками: {failed_count}."
+                    "Задание %s завершено со статусом '%s' (успешно: %d, с ошибками: %d)",
+                    task_id,
+                    task_status,
+                    successful_count,
+                    failed_count,
                 )
 
             except Exception as exc:
-                logger.exception(f"[Task {task_id}] Критическая ошибка обработки импорта: {exc}")
+                logger.exception("Критическая ошибка обработки импорта %s: %s", task_id, exc)
                 await task_repo.update_status(
                     task_id=task_id,
                     status="failed",

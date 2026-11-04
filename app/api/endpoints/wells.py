@@ -25,7 +25,7 @@ async def list_wells(
     limit: int = Query(100, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
 ):
-    """Получение списка скважин."""
+    """Возвращает список скважин с поддержкой фильтрации по кустовой площадке и пагинации."""
     repo = WellRepository(db)
     wells, _ = await repo.list_wells(well_pad_id=well_pad_id, skip=skip, limit=limit)
     return wells
@@ -36,9 +36,9 @@ async def get_well_card(
     well_id: str,
     db: AsyncSession = Depends(get_db),
 ):
-    """Получение карточки скважины.
+    """Возвращает карточку скважины с параметрами устья и статусом траектории.
     
-    Карточка скважины всегда доступна, даже если профиль повреждён.
+    Карточка скважины остаётся доступной, даже если профиль повреждён (NEF-27).
     """
     repo = WellRepository(db)
     well = await repo.get_by_id(well_id, load_pad=True)
@@ -67,7 +67,7 @@ async def update_well(
     payload: WellUpdate,
     db: AsyncSession = Depends(get_db),
 ):
-    """Обновление параметров скважины (например, устьевых координат)."""
+    """Обновляет устьевые координаты скважины (X, Y, Z)."""
     repo = WellRepository(db)
     well = await repo.get_by_id(well_id, load_pad=True)
     if not well:
@@ -106,14 +106,14 @@ async def get_well_trajectory(
     step: int = Query(1, ge=1, le=100, description="Шаг прореживания (1 = все точки)"),
     db: AsyncSession = Depends(get_db),
 ):
-    """Получение точек траектории скважины с вычисленными геопривязанными координатами.
+    """Возвращает точки траектории скважины с вычисленными геопривязанными координатами.
     
-    Геопривязка (Раздел 8):
+    Формулы геопривязки (NEF-14):
     - X = wellhead_x + DeviationEW
     - Y = wellhead_y + DeviationNS
-    - Z = wellhead_z - TVD (отметка по вертикали)
+    - Z = wellhead_z - TVD (вертикальная отметка)
     
-    Если статус траектории 'error', точки не возвращаются.
+    Если статус траектории 'error', возвращается пустой список точек.
     """
     well_repo = WellRepository(db)
     well = await well_repo.get_by_id(well_id)

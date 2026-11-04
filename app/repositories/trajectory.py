@@ -51,6 +51,7 @@ class TrajectoryRepository:
         limit: int = 1000,
         step: int = 1,
     ) -> Tuple[List[TrajectoryPoint], int]:
+        """Возвращает точки траектории скважины с поддержкой пагинации и прореживания (step)."""
         count_stmt = select(func.count(TrajectoryPoint.id)).where(TrajectoryPoint.well_id == well_id)
         total_points = (await self.session.execute(count_stmt)).scalar_one()
 
