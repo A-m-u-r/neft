@@ -1,21 +1,43 @@
-# Локальные материалы планирования
-.codex-task-planning/
+# Python & Bytecode
+__pycache__/
+*.py[cod]
+*$py.class
 
-# Переменные окружения и секреты
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# Configuration & Secrets
 .env
-.env.*
-!.env.example
-!.env.sample
-secrets/
-*.key
-*.pem
-*.p12
-*.pfx
-credentials*.json
-service-account*.json
+.env.local
 
-# Локальные файлы операционной системы и журналы
+# IDEs & Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
 .DS_Store
-Thumbs.db
-Desktop.ini
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Databases & Runtime State
+*.sqlite3
+*.db
+*.db-wal
+*.db-shm
+
+# Logs
 *.log
+logs/
+
+# Local test / acceptance artifacts
+NEF-28_acceptance/
+
+# Storage & Uploads
+storage/uploads/*
+!storage/uploads/.gitkeep
